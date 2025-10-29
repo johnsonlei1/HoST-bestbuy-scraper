@@ -29,7 +29,7 @@ def write_csv(dataframe, file_name):
 	#dataframe.index += 1 	# With this line the first laptop will have an index of 1 beside it (optional)
 	dataframe.to_csv(f"{file_name}.csv")
 
-url = "https://www.bestbuy.ca/en-ca/collection/laptops-on-sale/46082?path=category%253aComputers%2B%2526%2BTablets%253bcategory%253aLaptops%2B%2526%2BMacBooks%253bsoldandshippedby0enrchstring%253aBest%2BBuy"
+url = "https://www.bestbuy.ca/en-ca/search?search=security+camera"
 
 options = webdriver.ChromeOptions()
 options.add_argument("--incognito") # Fresh start every time so no interference
@@ -52,12 +52,7 @@ try:
 except Exception:
     pass
 
-# Wait until the page is in the expected state before proceeding
-WebDriverWait(driver, 30).until(
-    lambda d: ("Laptop" in d.title) or ("laptops-on-sale" in d.current_url)
-)
-
-# Also wait for the main content to be present
+# Wait for the main content to be present (works for both collection and search pages)
 WebDriverWait(driver, 30).until(
     EC.presence_of_element_located((By.CSS_SELECTOR, "main"))
 )
@@ -122,6 +117,7 @@ prices = []
 discounts = []
 ratings = []
 num_reviews = []
+urls = []
 
 for product in product_elements: # Go through each product on page (DOM extraction)
     # Extract via relative XPaths with class-substring predicates for resilience
@@ -133,10 +129,20 @@ for product in product_elements: # Go through each product on page (DOM extracti
         price_el = product.find_element(By.XPATH, ".//div[starts-with(@class,'price_')]")
     except Exception:
         price_el = None
+    # Try to capture URL from anchor around the name
+    product_url = ""
+    try:
+        link_el = product.find_element(By.XPATH, ".//a[contains(@href,'/en-ca/')]")
+        href = link_el.get_attribute("href") or ""
+        product_url = href
+    except Exception:
+        product_url = ""
+
     if not name_el or not price_el:
         continue
     names.append(name_el.text.strip())
     prices.append(price_el.text.strip())
+    urls.append(product_url)
 
     # Discount
     try:
@@ -166,9 +172,16 @@ for product in product_elements: # Go through each product on page (DOM extracti
 
 # If DOM method found nothing, fallback to app state extraction
 if not names and app_products:
+    def slugify(text):
+        text = (text or "").lower()
+        text = re.sub(r"[^a-z0-9]+", "-", text)
+        text = re.sub(r"-+", "-", text).strip("-")
+        return text
+
     for p in app_products:
         # Name
-        names.append((p.get('name') or '').strip())
+        name_val = (p.get('name') or '').strip()
+        names.append(name_val)
         # Price: choose priceWithoutEhf or salePrice fields if available
         price_value = p.get('priceWithoutEhf') or p.get('salePrice') or p.get('price')
         prices.append(str(price_value) if price_value is not None else '')
@@ -187,6 +200,19 @@ if not names and app_products:
             num_reviews.append(int(rc) if rc is not None else 0)
         except Exception:
             num_reviews.append(0)
+        # URL: try direct field, else build from name and sku
+        sku = p.get('sku') or p.get('skuId')
+        url_field = p.get('productUrl') or p.get('url')
+        if url_field:
+            full_url = url_field if url_field.startswith('http') else f"https://www.bestbuy.ca{url_field}"
+            urls.append(full_url)
+        elif sku and name_val:
+            slug = slugify(name_val)
+            urls.append(f"https://www.bestbuy.ca/en-ca/product/{slug}/{sku}")
+        elif sku:
+            urls.append(f"https://www.bestbuy.ca/en-ca/sku/{sku}")
+        else:
+            urls.append("")
 
 # Dictionary with headers and values of laptop data
 laptop_dict = {
@@ -194,7 +220,8 @@ laptop_dict = {
 	"Sale Price": prices,
 	"Discount": discounts,
 	"Rating": ratings,
-	"Number of Reviews": num_reviews
+	"Number of Reviews": num_reviews,
+	"URL": urls
 }
 
 #Create structured dataframe of dictionary data for easy access and use
