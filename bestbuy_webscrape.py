@@ -240,6 +240,24 @@ if len(laptop_dataframe) == 0:
     except Exception:
         pass
 
+# Also write product URLs to a text file (one per line), if available
+try:
+    unique_urls = []
+    seen = set()
+    for u in urls:
+        if not u:
+            continue
+        if u in seen:
+            continue
+        seen.add(u)
+        unique_urls.append(u)
+    with open("product_urls.txt", "w", encoding="utf-8") as f:
+        for u in unique_urls:
+            f.write(u + "\n")
+    print(f"Wrote {len(unique_urls)} URLs to product_urls.txt")
+except Exception as e:
+    print("Could not write product_urls.txt:", e)
+
 driver.quit() # Close our automated browser
 print("Driver has been quit")
 print("Web Scraping and CSV file writing complete!")
