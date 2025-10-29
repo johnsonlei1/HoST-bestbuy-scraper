@@ -3,17 +3,26 @@
 # July 12/ 2020
 import time
 import pandas
+import re
 
 from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 # Function to click the button on the page and wait a few seconds
 def click_button():
-	# Must redefine button to avoid stale error:
-	button = driver.find_element_by_xpath("//*[@id=\"root\"]/div/div/div[3]/div[1]/div/main/div[2]/button/span")
-	#button = driver.find_elements_by_class_name("content_3dXxd") # This line previously worked, but after an error I switched to Xpath
-	button.click()
-	time.sleep(5) # Time allows the page to load (may depend on internet speeds)
+    # Try a resilient locator for the Show more button, fallback to the legacy class
+    try:
+        button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[.//span[contains(., 'Show more') or contains(., 'Show More')]]"))
+        )
+    except Exception:
+        button = driver.find_element(By.CLASS_NAME, "content_3dXxd")
+    button.click()
+    # Brief wait to allow new items to load
+    time.sleep(2)
 
 # Function to write csv files with a pandas dataframe
 def write_csv(dataframe, file_name):
@@ -30,10 +39,30 @@ driver = webdriver.Chrome(options=options) # Initialize driver with chrome optio
 driver.get(url) # Bring the browser to the url specified above
 driver.set_window_size(1200, 900) # Set window resolution so that all elements can still load on page
 
-assert "Laptops on Sale" in driver.title # Make sure we are on the right page before proceeding
-time.sleep(10) # Give time to load full page
+# Debug: print initial page info
+print("TITLE (initial):", driver.title)
+print("URL (initial):", driver.current_url)
 
-button = driver.find_element_by_class_name("content_3dXxd") # Finding the "Show More" button at the bottom of the page
+# Handle possible consent/region modal if present (best-effort, ignore failures)
+try:
+    consent = WebDriverWait(driver, 5).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Accept') or contains(., 'Got it') or contains(., 'I agree')]"))
+    )
+    consent.click()
+except Exception:
+    pass
+
+# Wait until the page is in the expected state before proceeding
+WebDriverWait(driver, 30).until(
+    lambda d: ("Laptop" in d.title) or ("laptops-on-sale" in d.current_url)
+)
+
+# Also wait for the main content to be present
+WebDriverWait(driver, 30).until(
+    EC.presence_of_element_located((By.CSS_SELECTOR, "main"))
+)
+
+# The loop below will repeatedly click the "Show more" button until it disappears
 
 while True: # If the button exists, click it
 	try:
@@ -42,12 +71,50 @@ while True: # If the button exists, click it
 	except:
 		break
 
-html = driver.page_source # Once the full page with products is loaded, get the html data
-driver.quit() # Close our automated browser
-print("Driver has been quit")
+def scroll_to_bottom():
+    previous_height = driver.execute_script("return document.body.scrollHeight")
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(1.5)
+    current_height = driver.execute_script("return document.body.scrollHeight")
+    return current_height != previous_height
 
-html_soup = BeautifulSoup(html, "html.parser") # Parse the html data for analysis and sorting
-laptop_containers = html_soup.find_all("div", class_ ="col-xs-8_1VO-Q col-sm-12_1kbJA productItemTextContainer_HocvR") # Find the containers that contains a products info
+# Keep clicking Show more while available and also perform a final scroll to ensure all items render
+while True: # If the button exists, click it
+	try:
+		click_button()
+		print("\"Show more\" buttton has been clicked")
+		# wait a bit for content to append
+		WebDriverWait(driver, 10).until(lambda d: scroll_to_bottom() or True)
+	except Exception:
+		# try one last scroll after no button is clickable
+		scrolled = scroll_to_bottom()
+		if not scrolled:
+			break
+
+## Approach A: Gather from live DOM (may be empty if CSR hasn't rendered yet)
+product_elements = driver.find_elements(By.XPATH, "//div[contains(@class,'productItemTextContainer')]")
+print("Found product containers (selenium):", len(product_elements))
+
+## Approach B: Pull directly from BestBuy's in-page state (React) if available
+def get_products_via_app_state():
+    script = (
+        "return (window.AppEventData && AppEventData.computedState && AppEventData.computedState.state && "
+        "AppEventData.computedState.state.search && AppEventData.computedState.state.search.searchResult && "
+        "AppEventData.computedState.state.search.searchResult.products) || [];"
+    )
+    try:
+        return driver.execute_script(script) or []
+    except Exception:
+        return []
+
+# Wait briefly for products to populate in app state
+try:
+    WebDriverWait(driver, 10).until(lambda d: len(get_products_via_app_state()) > 0)
+except Exception:
+    pass
+
+app_products = get_products_via_app_state()
+print("Products from app state:", len(app_products))
 
 # Create lists to be added to
 names = []
@@ -56,25 +123,70 @@ discounts = []
 ratings = []
 num_reviews = []
 
-for laptop in laptop_containers: # Go through each laptop on page
-	# Names
-	name = laptop.find("div", class_ = "productItemName_3IZ3c").text
-	names.append(name)
-	# Prices
-	price = laptop.find("div", class_ = "price_FHDfG").text
-	prices.append(price)
-	# Discounts
-	discount = laptop.find("span", class_ = "productSaving_3YmNX").text
-	discount = discount.split() # Gets rid of "SAVE" and just leaves the $price
-	discounts.append(discount[-1])
-	# Ratings
-	rating = laptop.find("meta", attrs = {"itemprop": "ratingValue"})
-	ratings.append(float(rating["content"])) # Gives the number value of the rating
-	# Reviews
-	review = laptop.find("span", attrs = {"itemprop": "ratingCount"}).text
-	review = review[1:-1] # Removes parentheses around string
-	review = review.split() # Splits into [NUMBER, "Reviews"]
-	num_reviews.append(int(review[0])) # Only take number
+for product in product_elements: # Go through each product on page (DOM extraction)
+    # Extract via relative XPaths with class-substring predicates for resilience
+    try:
+        name_el = product.find_element(By.XPATH, ".//div[contains(@class,'productItemName')]")
+    except Exception:
+        name_el = None
+    try:
+        price_el = product.find_element(By.XPATH, ".//div[starts-with(@class,'price_')]")
+    except Exception:
+        price_el = None
+    if not name_el or not price_el:
+        continue
+    names.append(name_el.text.strip())
+    prices.append(price_el.text.strip())
+
+    # Discount
+    try:
+        discount_el = product.find_element(By.XPATH, ".//span[contains(@class,'productSaving')]")
+        tokens = discount_el.text.strip().split()
+        discounts.append(tokens[-1] if tokens else "")
+    except Exception:
+        discounts.append("")
+
+    # Ratings
+    try:
+        rating_meta = product.find_element(By.XPATH, ".//meta[@itemprop='ratingValue']")
+        ratings.append(float(rating_meta.get_attribute("content")))
+    except Exception:
+        ratings.append(None)
+
+    # Reviews count
+    try:
+        review_el = product.find_element(By.XPATH, ".//span[@itemprop='ratingCount']")
+        review_text = review_el.text.strip()
+        if review_text.startswith("(") and review_text.endswith(")"):
+            review_text = review_text[1:-1]
+        review_tokens = review_text.split()
+        num_reviews.append(int(review_tokens[0]))
+    except Exception:
+        num_reviews.append(0)
+
+# If DOM method found nothing, fallback to app state extraction
+if not names and app_products:
+    for p in app_products:
+        # Name
+        names.append((p.get('name') or '').strip())
+        # Price: choose priceWithoutEhf or salePrice fields if available
+        price_value = p.get('priceWithoutEhf') or p.get('salePrice') or p.get('price')
+        prices.append(str(price_value) if price_value is not None else '')
+        # Discount/saving
+        saving_value = p.get('saving')
+        discounts.append(str(saving_value) if saving_value is not None else '')
+        # Ratings
+        rating_avg = p.get('ratingAverage') or p.get('rating')
+        try:
+            ratings.append(float(rating_avg) if rating_avg is not None else None)
+        except Exception:
+            ratings.append(None)
+        # Reviews count
+        rc = p.get('ratingCount') or p.get('reviews')
+        try:
+            num_reviews.append(int(rc) if rc is not None else 0)
+        except Exception:
+            num_reviews.append(0)
 
 # Dictionary with headers and values of laptop data
 laptop_dict = {
@@ -87,7 +199,20 @@ laptop_dict = {
 
 #Create structured dataframe of dictionary data for easy access and use
 laptop_dataframe = pandas.DataFrame(laptop_dict)
+print("Rows captured:", len(laptop_dataframe))
 
 # Finally write file to csv for external use and print end statement
 write_csv(laptop_dataframe, "laptops_csv")
+if len(laptop_dataframe) == 0:
+    print("No products parsed. Writing debug_page.html for inspection.")
+    try:
+        # Ensure we snapshot the final DOM state
+        html_snapshot = driver.page_source
+        with open("debug_page.html", "w", encoding="utf-8") as f:
+            f.write(html_snapshot)
+    except Exception:
+        pass
+
+driver.quit() # Close our automated browser
+print("Driver has been quit")
 print("Web Scraping and CSV file writing complete!")
