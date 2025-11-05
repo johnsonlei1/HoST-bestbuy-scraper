@@ -55,11 +55,13 @@ def extract_from_app_state(driver: webdriver.Chrome) -> Dict[str, Any]:
         "const s=(window.AppEventData && AppEventData.computedState && AppEventData.computedState.state)||{};" \
         "const pdp=s.pdp||{};" \
         "const product=pdp.product||s.product||{};" \
-        "const pricing=product.pricing||product.price||{};" \
+        "const pricing=product.pricing||{};" \
         "const reviews=pdp.customerReviews||s.customerReviews||{};" \
+        "const pick=(...vals)=>vals.find(v=>v!==undefined&&v!==null&&v!=='' );" \
+        "const price=pick(pricing.current, pricing.sale, pricing.regular, product.currentPrice, product.salePrice, product.priceWithoutEhf, product.price);" \
         "return {" \
         "  name: product.name || product.title || s.productName, " \
-        "  price: pricing.current || pricing.sale || product.priceWithoutEhf || product.salePrice || product.price, " \
+        "  price: price, " \
         "  ratingAverage: (reviews.ratingAverage || reviews.average || product.ratingAverage || product.rating), " \
         "  ratingCount: (reviews.ratingCount || reviews.count || product.ratingCount || product.reviews), " \
         "  description: (product.longDescription || product.description || pdp.longDescription || s.description) " \
@@ -96,18 +98,71 @@ def extract_from_dom(driver: webdriver.Chrome) -> Dict[str, Any]:
             name = ""
     data["name"] = normalize_space(name)
 
-    # Price
+    # Price - multiple strategies
     price = ""
-    for xp in [
-        "//div[starts-with(@class,'price_')]",
-        "//*[@data-automation='product-price']",
-        "//*[contains(@class,'price') and (self::div or self::span)]",
-    ]:
+    # 1) meta itemprop="price"
+    try:
+        meta_price = driver.find_element(By.XPATH, "//meta[@itemprop='price']")
+        price = meta_price.get_attribute("content") or ""
+    except Exception:
+        pass
+    # 2) explicit automation hooks or class prefixes
+    if not price:
+        for xp in [
+            "//*[@data-automation='product-price']",
+            "//*[@data-automation='x-product-price']",
+            "//div[starts-with(@class,'price_')]|//span[starts-with(@class,'price_')]",
+            "//*[contains(@class,'price') and (self::div or self::span)]",
+        ]:
+            try:
+                el = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, xp)))
+                text = el.text.strip()
+                if text:
+                    price = text
+                    break
+            except Exception:
+                pass
+    # 3) JSON-LD offers.price
+    if not price:
         try:
-            el = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, xp)))
-            price = el.text.strip()
-            if price:
-                break
+            scripts = driver.find_elements(By.XPATH, "//script[@type='application/ld+json']")
+            for s_el in scripts:
+                try:
+                    import json
+                    obj = json.loads(s_el.get_attribute("textContent") or "{}")
+                except Exception:
+                    continue
+                def find_price(o: Any):
+                    if isinstance(o, dict):
+                        if o.get("@type") == "Product":
+                            offers = o.get("offers")
+                            if isinstance(offers, dict):
+                                return offers.get("price") or offers.get("lowPrice")
+                            if isinstance(offers, list) and offers:
+                                return offers[0].get("price") or offers[0].get("lowPrice")
+                        for v in o.values():
+                            res = find_price(v)
+                            if res:
+                                return res
+                    if isinstance(o, list):
+                        for it in o:
+                            res = find_price(it)
+                            if res:
+                                return res
+                    return None
+                jp = find_price(obj)
+                if jp:
+                    price = str(jp)
+                    break
+        except Exception:
+            pass
+    # 4) Fallback: regex search in main text for a price-like token
+    if not price:
+        try:
+            main_text = driver.find_element(By.CSS_SELECTOR, "main").text
+            m = re.search(r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?", main_text)
+            if m:
+                price = m.group(0)
         except Exception:
             pass
     data["price"] = normalize_space(price)

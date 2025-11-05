@@ -220,21 +220,9 @@ product_dict = {
 	"URL": urls
 }
 
-#Create structured dataframe of dictionary data for easy access and use
-results_dataframe = pandas.DataFrame(product_dict)
-print("Rows captured:", len(results_dataframe))
-
-# Finally write file to csv for external use and print end statement
-write_csv(results_dataframe, "searchresults")
-if len(results_dataframe) == 0:
-    print("No products parsed. Writing debug_page.html for inspection.")
-    try:
-        # Ensure we snapshot the final DOM state
-        html_snapshot = driver.page_source
-        with open("debug_page.html", "w", encoding="utf-8") as f:
-            f.write(html_snapshot)
-    except Exception:
-        pass
+#Create structured dataframe of dictionary data for debugging if needed (not persisted)
+# results_dataframe = pandas.DataFrame(product_dict)
+# print("Rows captured:", len(results_dataframe))
 
 # Also write product URLs to a text file (one per line), if available
 try:
