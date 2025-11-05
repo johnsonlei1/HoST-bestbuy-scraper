@@ -1,6 +1,3 @@
-# Script to scrape laptops on sale from BestBuy.ca
-# Personal project by Justin Mikhail, Computer Engineering Student
-# July 12/ 2020
 import time
 import pandas
 import re
@@ -26,7 +23,6 @@ def click_button():
 
 # Function to write csv files with a pandas dataframe
 def write_csv(dataframe, file_name):
-	#dataframe.index += 1 	# With this line the first laptop will have an index of 1 beside it (optional)
 	dataframe.to_csv(f"{file_name}.csv")
 
 url = "https://www.bestbuy.ca/en-ca/search?search=security+camera"
@@ -214,8 +210,8 @@ if not names and app_products:
         else:
             urls.append("")
 
-# Dictionary with headers and values of laptop data
-laptop_dict = {
+# Dictionary with headers and values of product data
+product_dict = {
 	"Name": names,
 	"Sale Price": prices,
 	"Discount": discounts,
@@ -225,12 +221,12 @@ laptop_dict = {
 }
 
 #Create structured dataframe of dictionary data for easy access and use
-laptop_dataframe = pandas.DataFrame(laptop_dict)
-print("Rows captured:", len(laptop_dataframe))
+results_dataframe = pandas.DataFrame(product_dict)
+print("Rows captured:", len(results_dataframe))
 
 # Finally write file to csv for external use and print end statement
-write_csv(laptop_dataframe, "laptops_csv")
-if len(laptop_dataframe) == 0:
+write_csv(results_dataframe, "searchresults")
+if len(results_dataframe) == 0:
     print("No products parsed. Writing debug_page.html for inspection.")
     try:
         # Ensure we snapshot the final DOM state

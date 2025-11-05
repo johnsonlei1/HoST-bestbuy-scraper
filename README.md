@@ -1,15 +1,23 @@
-# BestBuy-Webscraper (First Personal Project to learn Python)
+Simple python program to scrape BestBuy.ca
 
-A quick script to learn web scraping by taking the list of laptops on sale on BestBuy.ca as a personal project.
+Thanks to jamikhai for template
 
 Libraries needed:
-- time
 - pandas
 - selenium (Webdriver)
 - bs4 (BeautifulSoup)
 
 Usage:
-1. In terminal, run this program with "python3 bestbuy_webscrape.py" in the directory that it is saved in.
-2. Wait 20 - 30 seconds for the script to gather the information from the website.
-3. A csv file named "laptops_csv" will be saved to the same directory.
+
+Optional: create a virtual environment
+    1. run python -m venv .venv  
+    2. run Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    3. run venv\Scripts\activate
+
+1. in terminal run pip install pandas selenium beautifulsoup4
+2. edit line 32 of bestbuy_webscrape.py to any bestbuy.ca search url.
+3. run python3 bestbuy_webscrape.py to scrape all products from that search result
+4. the product urls are saved to product_urls.txt
+5. run python3 product.py to scrape the information from each individual product page
+6. product data is saved in product_details.csv
 

@@ -28,8 +28,6 @@ def read_urls_list(path: str) -> List[str]:
 def setup_driver() -> webdriver.Chrome:
     options = webdriver.ChromeOptions()
     options.add_argument("--incognito")
-    # Uncomment for headless mode
-    # options.add_argument("--headless=new")
     options.add_argument("--window-size=1200,900")
     driver = webdriver.Chrome(options=options)
     return driver
